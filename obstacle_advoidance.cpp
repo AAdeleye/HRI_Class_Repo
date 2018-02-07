@@ -16,6 +16,7 @@ typedef pcl::PointCloud<pcl::PointXYZ> PointCloud;
 uint16_t state;
 double goal_sum_x = 0; //ADD TO CODE
 int16_t goal_sum_y = 0; //ADD TO CODE
+double goal_area = 0; //ADD to code
 double Center = 320;
 std::vector<uint16_t> goal_xs;
 
@@ -31,7 +32,7 @@ void blobsCallBack (const cmvision::Blobs& blobsIn) //this gets the centroid of 
 {
 	//state = 1;
 	//if (!got_goal_blobs){
-    if (blobsIn.blob_count > 0 && state != 2){
+    if (blobsIn.blob_count > 0 && state != 2 && state != 3){
 		ROS_INFO("In blobsCallBack");
 		uint16_t blob_sum, blob_centroid_sum, num_blobs;
 		uint8_t cluster_dist_x = 0;
@@ -101,9 +102,23 @@ void blobsCallBack (const cmvision::Blobs& blobsIn) //this gets the centroid of 
 //        }
 
 	}//got_goal_blobs if 
-    else if (state != 2)  { //No blobs detected, go back to state 0
+    else if (state != 2 && state != 3)  { //No blobs detected, go back to state 0
         state = 0;
     }
+
+   if(blobsIn.blob_count > 0 && state == 2){
+	   goal_area = 0;	
+       for (int i = 0; i < blobsIn.blob_count; i++){
+			ROS_INFO("Blob found");
+			if(blobsIn.blobs[i].area > goal_area){
+                goal_area = blobsIn.blobs[i].area;
+            }
+	    }
+       ROS_INFO("goal area %f", goal_area);
+       if(goal_area > 85000){
+            state = 3;
+       }
+   }
 }
 
 double CenterView(){
@@ -166,7 +181,7 @@ void PointCloud_Callback (const PointCloud::ConstPtr& cloud){
 		//Iterate through all the points in the image
 		//Convert from pcl to cm
 		for(int k = 0; k < 240; k++){ // 0, 240
-			for(int i = 50; i < 590; i++){ // 0, 640
+			for(int i = 30; i < 610; i++){ // 0, 640
 				const pcl::PointXYZ & pt=cloud->points[640*(180+k)+(i)];
 				if((pt.z < ZTHRESH)){
 					PCL_closest_points_x.push_back(i);
@@ -180,7 +195,7 @@ void PointCloud_Callback (const PointCloud::ConstPtr& cloud){
 			}
 		}
        // ROS_INFO("Min Z: %f", z_min);
-        if(z_min < .5){
+        if(z_min < .5 && state != 3){
             state = 2;
         } 
     /*
@@ -210,7 +225,7 @@ main (int argc, char** argv)
 
   ros::Rate loop_rate(10);
   geometry_msgs::Twist T;// cmd(new geometry_msgs::Twist());
-
+  int toggle = 0;
   while(ros::ok()){
     //Looking for goal
     if (state == 0){
@@ -228,13 +243,28 @@ main (int argc, char** argv)
     }
     //At goal
     else if (state == 2){
-      T.angular.z = .1;
-      T.linear.x = 0;
-      ROS_INFO("In State 2!! YAY");
-      Obstacle_avoid();  
+      //Obstacle_avoid(); 
+      if( toggle < 5){ 
+        ROS_INFO("In toggle < 5");
+        T.angular.z = -.3;
+        T.linear.x = 0;
+      }
+      else if( toggle >= 5 && toggle < 10) {
+          ROS_INFO("In toggle < 10");
+          T.linear.x = .1;
+          T.angular.z = 0;
+      }
+      if (toggle >= 10) {
+          ROS_INFO("In toggle > 10");
+          toggle = 0;
+          state = 0;
+      }
+      toggle += 1;
     }
     else if (state == 3){
-    
+        ROS_INFO("In state 3!");
+        T.linear.x = 0;
+        T.angular.z = 0;
     }
     //T.linear.x = 0.5;// (z - goal_z_) * z_scale_;
     //cmd->angular.z = 600;//-x * x_scale_;
