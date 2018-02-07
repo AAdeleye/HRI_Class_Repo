@@ -1,12 +1,3 @@
-/*#include <ros/ros.h>
-#include <cmvision/Blobs.h>
-// PCL specific includes
-#include <sensor_msgs/PointCloud2.h>
-#include <pcl_conversions/pcl_conversions.h>
-#include <pcl/point_cloud.h>
-#include <pcl/point_types.h>
-#include <geometry_msgs/Twist.h>
-*/
 #include <kobuki_msgs/BumperEvent.h> 
 #include <geometry_msgs/Twist.h>
 #include <ros/ros.h>
@@ -19,11 +10,13 @@
 #include <math.h>
 ros::Publisher pub;
 
-bool got_goal_blobs = 0;
+typedef pcl::PointCloud<pcl::PointXYZ> PointCloud;
+
+//bool got_goal_blobs = 0;
 uint16_t state;
-uint16_t goal_sum_x = 0; //ADD TO CODE
+double goal_sum_x = 0; //ADD TO CODE
 int16_t goal_sum_y = 0; //ADD TO CODE
-uint16_t Center = 320;
+double Center = 320;
 std::vector<uint16_t> goal_xs;
 
 /************************************************************
@@ -37,7 +30,8 @@ std::vector<uint16_t> goal_xs;
 void blobsCallBack (const cmvision::Blobs& blobsIn) //this gets the centroid of the color blob corresponding to the goal.
 {
 	//state = 1;
-	if (!got_goal_blobs){
+	//if (!got_goal_blobs){
+    if (blobsIn.blob_count > 0 && state != 2){
 		ROS_INFO("In blobsCallBack");
 		uint16_t blob_sum, blob_centroid_sum, num_blobs;
 		uint8_t cluster_dist_x = 0;
@@ -45,8 +39,8 @@ void blobsCallBack (const cmvision::Blobs& blobsIn) //this gets the centroid of 
 		bool cluster_flag = false;
 		int x_sum = 0;
 		double z_sum = 0;
-		//uint16_t goal_sum_x = 0; //ADD TO CODE
-		//uint16_t goal_sum_y = 0; //ADD TO CODE
+		double goal_sum_x = 0; //ADD TO CODE
+		double goal_sum_y = 0; //ADD TO CODE
 		uint16_t num_goal_blobs = 0;
 
 		/************************************************************
@@ -84,69 +78,67 @@ void blobsCallBack (const cmvision::Blobs& blobsIn) //this gets the centroid of 
 		cluster_cone2_z.clear();
 
 		for (int i = 0; i < blobsIn.blob_count; i++){
-			if (blobsIn.blobs[i].red == 42 && blobsIn.blobs[i].green == 101 && blobsIn.blobs[i].blue == 82){
-				ROS_INFO("Teal blob found");
-				got_goal_blobs = 1;
-				goal_sum_x += blobsIn.blobs[i].x;
-				goal_sum_y += blobsIn.blobs[i].y;
-			}
+			ROS_INFO("Blob found");
+//			got_goal_blobs = 1;
+			goal_sum_x += blobsIn.blobs[i].x;
+		    goal_sum_y += blobsIn.blobs[i].y;
 		}
-		if(blobsIn.blob_count != 0){
+
+//		if(blobsIn.blob_count != 0){
             state = 1;
 			goal_sum_x = goal_sum_x / blobsIn.blob_count;
 			goal_sum_y = goal_sum_y / blobsIn.blob_count;
-            goal_xs.push_back(goal_sum_x);
+            goal_xs.insert(goal_xs.begin(), goal_sum_x);
             if (goal_xs.size() > 3) {
                 goal_xs.pop_back();
             }
-		}
-        else {
+		    ROS_INFO("x: %f", goal_sum_x);
+		    //ROS_INFO("y: %d", goal_sum_y);
+//		}
+//        else {
             // No blobs visible, so continue to turn and look for one
-            state = 0;
-        }
-		ROS_INFO("x: %d", goal_sum_x);
-		ROS_INFO("y: %d", goal_sum_y);
-		ros::Duration(1.0).sleep();
+//            state = 0;
+//        }
 
-	}
+	}//got_goal_blobs if 
+    else if (state != 2)  { //No blobs detected, go back to state 0
+        state = 0;
+    }
 }
 
 double CenterView(){
-    int error = Center - goal_sum_x;
-    if(error > 30 ){
-        int Pvalue = .005;
-        int Ivalue = 0;
-        
-        got_goal_blobs = 0;
-           
-        for (int i=0; i < goal_xs.size(); i++){
-            Ivalue += goal_xs[i];
-        }
-        Ivalue /= goal_xs.size();
-        
-
-        double output = (Pvalue * error) + (Ivalue * error);
+    //double error = Center - goal_sum_x;
+    double error = Center - goal_xs.front();
+    int Pvalue = .005;
+    int Ivalue = 0;
+    ROS_INFO("Error: %f", error);
+    // Average the last three median x's of a blob   
+    for (int i=0; i < goal_xs.size(); i++){
+        Ivalue += goal_xs[i];
+    }
+    Ivalue /= goal_xs.size();
+    double output = .1;      
+//    double output = (Pvalue * error) + Ivalue;
+    
+    if(error > 30.0 ){ 
         return output;
     }
-    if(error < -30 ){
-        int Pvalue = .005;
-        int Ivalue = 0;
-        
-        got_goal_blobs = 0;
-           
-        for (int i=0; i < goal_xs.size(); i++){
-            Ivalue += goal_xs[i];
-        }
-        Ivalue /= goal_xs.size();
-        
-
-        double output = (Pvalue * error) + (Ivalue * error);
+    if(error < -30.0 ){
         return (-1.0*output);
     }
     else {
+        //state = 0;
+        //got_goal_blobs = 0;
+        ROS_INFO("No correction");
         return 0.0;
     }
 }
+
+ void Obstacle_avoid(){
+ 
+ 
+ 
+ }
 
 /************************************************************
  * Function Name: PointCloud_Callback
@@ -156,23 +148,25 @@ double CenterView(){
  * Description: This is the callback function of the PointCloud
  * 				topic, flags when an object is below the threshhold 
  ***********************************************************/
-/*
 void PointCloud_Callback (const PointCloud::ConstPtr& cloud){
 
 		unsigned int n = 0;
 		int s,t;
 		double min_z = 100, x, y;
 		int y_point = 0;
-
+        double ZTHRESH = .5;
+        std::vector<double> PCL_closest_points;
+        std::vector<double> PCL_closest_points_x;
+        std::vector<double> PCL_closest_points_y;
 		PCL_closest_points.clear();
 		PCL_closest_points_x.clear();
 		PCL_closest_points_y.clear();
 
-		z_min = 100;
+		double z_min = 100;
 		//Iterate through all the points in the image
 		//Convert from pcl to cm
-		for(int k = 0; k < 240; k++){
-			for(int i = 0; i < 640; i++){
+		for(int k = 0; k < 240; k++){ // 0, 240
+			for(int i = 50; i < 590; i++){ // 0, 640
 				const pcl::PointXYZ & pt=cloud->points[640*(180+k)+(i)];
 				if((pt.z < ZTHRESH)){
 					PCL_closest_points_x.push_back(i);
@@ -185,13 +179,18 @@ void PointCloud_Callback (const PointCloud::ConstPtr& cloud){
 				}
 			}
 		}
+       // ROS_INFO("Min Z: %f", z_min);
+        if(z_min < .5){
+            state = 2;
+        } 
+    /*
 	if(got_goal_blobs){
 		const pcl::PointXYZ& ptg = cloud->points[640 * (goal_loc_y - 1) + (goal_loc_x - 1)];
 		goal_depth = ptg.z;
 		got_goal_blobs = false; //reset the condition to allow the blob callback to get new blobs.
-	}
+	}*/
 }
-*/
+
 int
 main (int argc, char** argv)
 {
@@ -201,7 +200,7 @@ main (int argc, char** argv)
   //States variable 
   state = 0;
   
-  //ros::Subscriber PCSubscriber = nh.subscribe<PointCloud>("/camera/depth/points", 1, PointCloud_Callback);
+  ros::Subscriber PCSubscriber = nh.subscribe<PointCloud>("/camera/depth/points", 1, PointCloud_Callback);
 
   //subscribe to /blobs topic 
   ros::Subscriber blobsSubscriber = nh.subscribe("/blobs", 50, blobsCallBack);
@@ -215,17 +214,26 @@ main (int argc, char** argv)
   while(ros::ok()){
     //Looking for goal
     if (state == 0){
-      T.angular.z = .05;
+      T.angular.z = .1;
+      T.linear.x = 0;
+      ROS_INFO("I am spinnning");
     }
     //Moving to goal
     else if (state == 1){
 	  ROS_INFO("In State 1");
       T.linear.x = .05;
-      ROS_INFO("%d", CenterView());
-      T.angular.z = CenterView()*(.05);
+      T.angular.z = 0;
+      ROS_INFO("CenterView: %f", CenterView());
+      T.angular.z = CenterView();
     }
     //At goal
     else if (state == 2){
+      T.angular.z = .1;
+      T.linear.x = 0;
+      ROS_INFO("In State 2!! YAY");
+      Obstacle_avoid();  
+    }
+    else if (state == 3){
     
     }
     //T.linear.x = 0.5;// (z - goal_z_) * z_scale_;
