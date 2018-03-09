@@ -2,7 +2,7 @@
 /******************************************************************
 *                                                                 *
 *                        HRI: CSE 276B/291F                       * 
-*                               HW 9                              *
+*                               HW 10                             *
 *                           Winter 2018                           *
 *              Sanmi Adeleye, Andi Frank, Alyssa Kubota           *
 *                                                                 *
@@ -23,20 +23,19 @@
 #include <kobuki_msgs/Sound.h>
 #include <geometry_msgs/Twist.h>
 #include <ros/ros.h>
-//#include <cmvision/Blobs.h>
 #include <stdio.h>
 #include <ctype.h>
 #include <string.h>
 #include <vector>
-#include <pcl_ros/point_cloud.h>
-#include <pcl/point_types.h>
+//#include <pcl/point_types.h>
 #include <time.h>
 #include <math.h>
 #include <move_base_msgs/MoveBaseAction.h>
 #include <actionlib/client/simple_action_client.h>
 #include <std_msgs/String.h>
 #include <boost/thread/thread.hpp>
-//#include <mutex>
+#include "sound_play/sound_play.h"
+#include <stdlib.h>
 
 // ************************************************************* //
 // *************                                   ************* //
@@ -44,45 +43,16 @@
 // *************                                   ************* //
 // ************************************************************* //
 
-//       vv MEASURED vv
-// Outside left elevator
-#define ELEV3L_X	    28.43
-#define ELEV3L_Y	    2.17
-#define ELEV3L_OZ       0.703   // NOTE: OZ and OW are heading parameters
-#define ELEV3L_OW       0.710
-// Outside right elevator
-#define ELEV3R_X        30.97
-#define ELEV3R_Y        2.38
-#define ELEV3R_OZ       0.699
-#define ELEV3R_OW       0.714
-// Delivery location
-#define DELIVERY_X 	24.986	// you'll want to make DELIVERY_X and DELIVER_Y not '#define's 
-#define DELIVERY_Y 	28.211  // for if you're searching out a person instead of a hardcoded location
-#define DELIVERY_OZ 0.633
-#define DELIVERY_OW 0.774
-
-//      vv NOT MEASURED YET vv
-// Start location.
-#define HOME_X 		    0.398
-#define HOME_Y 		    0.394
-// Inside left elevator
-#define ELEV3L_IN_X     29.867
-#define ELEV3L_IN_Y     3.468
-#define ELEV3L_IN_OZ    -0.689
-#define ELEV3L_IN_OW    0.724
-// Inside right elevator
-#define ELEV3R_IN_X     31.692
-#define ELEV3R_IN_Y     3.102
-#define ELEV3R_IN_OZ    -0.721
-#define ELEV3R_IN_OW    0.692
-// Second floor elevators
-#define ELEV2L_X	30.0
-#define ELEV2L_Y	5.0
-#define ELEV2R_X    25.0
-#define ELEV2R_Y    5.0
-// Pointcloud Z threshold for elevator being considered open
-#define Z_THRESH    5.0
-
+// Lobby
+#define LOBBY_X     25.464
+#define LOBBY_Y     0.2786
+#define LOBBY_OZ    -0.373
+#define LOBBY_OW     0.927
+// Class location
+#define CLASS_X     0.398
+#define CLASS_Y     0.394
+#define CLASS_OZ    0.0
+#define CLASS_OW    0.0
 
 // ************************************************************* //
 // *************                                   ************* //
@@ -91,38 +61,33 @@
 // ************************************************************* //
 
 //            <<  Type Definitions  >>
-typedef pcl::PointCloud<pcl::PointXYZ> PointCloud;
 
 //   State Variables. 
 enum State { 
-    TO_ELEV, 
-    WAIT_ELEV, 
-    ENTER_ELEV, 
-    ON_ELEV, 
-    EXIT_ELEV, 
-    TO_TARGET,
+    TO_LOBBY, 
+    WAIT_ACKNOWLEDGE,
+    WAIT_FOLLOW, 
+    TO_CLASS,
     AWAIT_INPUT,
     ERROR
 };
 
 //   Human-Robot Interaction request types.
 enum HRI_request {
-    PRESS_DOWN,
-//    PRESS_UP,
-    DOOR_OPEN,
-//    FLOOR_2,
-//    FLOOR_3,
-    WHICH_ELEV,
-    CONFIRM_DELIVERY
+    ACKNOWLEDGE,
+    ASK_FOLLOW,
+    CONFIRM_RETURNED
 };
 
 //           <<   Global Variables  >>
 double Z_MIN = 0.0;     // minimum distance from pointcloud data, updated in pc_callback
 geometry_msgs::Twist T;
 State my_state;
-//std::mutex mx;
-//std::string std_input;
 bool input_received;
+// Whether or not to use each attention-getting modality
+bool use_beeps;
+bool use_voice;
+bool use_rotate;
 
 // ************************************************************* //
 // ****************                             **************** //
@@ -134,7 +99,7 @@ bool input_received;
 // Rotate at a desired angular_velocity for a desired duration.
 void rotate(ros::Publisher velocityPublisher, double angular_vel, double duration_in_seconds){
     // turn magnitude degrees
-    std::cout << "Publishing...";
+    //std::cout << "Publishing...";
     T.angular.z = angular_vel;
     T.linear.x = 0.0;
     
@@ -143,26 +108,24 @@ void rotate(ros::Publisher velocityPublisher, double angular_vel, double duratio
     for(int i = 0; i < max_count; i++){
         rate.sleep();
         velocityPublisher.publish(T);
-        //ros::spinOnce();
-
     }
-    std::cout << " Published." << std::endl;
+    //std::cout << " Published." << std::endl;
     
     T.angular.z = 0.0;
     velocityPublisher.publish(T);
     rate.sleep();
-    std::cout << " Exiting rotate() method." << std::endl;
+    //std::cout << " Exiting rotate() method." << std::endl;
 }
 
 /*********************************************************************************************/
 // Move a specific distance straight forward.
 void move_forward(ros::Publisher velocityPublisher, double linear_vel, double duration_in_seconds){
-    std::cout << "Creating move forward command...";    
+    //std::cout << "Creating move forward command...";    
     T.angular.z = 0;
     T.linear.x = linear_vel;
 
     ros::Rate rate(10);
-    std::cout << " Publishing..." << std::endl << std::flush;
+    //std::cout << " Publishing..." << std::endl << std::flush;
     int max_count = (int) (duration_in_seconds * 10);
     for(int i = 0; i < max_count; i++){
         velocityPublisher.publish(T);
@@ -185,126 +148,46 @@ void make_sound(ros::Publisher soundPublisher){
 }
 
 /*********************************************************************************************/
+// Cause the turtlebot to say the string passed
+void make_voice(std::string &output_string){
+    // Check that the processor is available
+    //std::cout << "Checking if processor is available..." << std::endl;
+    if (system(NULL)) {
+        //puts ("Ok");
+        // Create the command to pass
+        std::string full_command_str = "rosrun sound_play say.py \"" + output_string + "\"";
+        const char *full_command = full_command_str.c_str();
+        // Send the command
+        system(full_command);
+    } else  std::cout<< "FAILURE" << std::endl;
+}
+
+
+/*********************************************************************************************/
+// Sets the global attention-getting boolean variables.
+void set_modalities(std::string &modalities) {
+    // If "b" was entered, use beeps
+    std::size_t found = modalities.find("b");
+    use_beeps = (found != std::string::npos);
+    // If "v" was entered, use voice
+    found = modalities.find("v");
+    use_voice = (found != std::string::npos);
+    // If "r" was entered, use rotation
+    found = modalities.find("r");
+    use_rotate = (found != std::string::npos);
+}
+
+
+/*********************************************************************************************/
 // Print error message from string in <msg>.
 void error_msg(std::string &msg){
     std::cout << "TLSTC has entered ERROR state with message: " << msg << std::endl;
 }
 
-
-// ************************************************************* //
-// ****************                             **************** //
-// *****                    CALLBACKS                      ***** //
-// ****************                             **************** //
-// ************************************************************* //
-
-/************************************************************
- * Function Name: pc_callback
- * Parameters: const PointCloud::ConstPtr
- * Returns: void
- *
- * Description: This is the callback function of the PointCloud
- *              topic, sets Z_MIN to the distance of the closest
- *              point to the bot.
- ************************************************************/
-void pc_callback (const PointCloud::ConstPtr& cloud){
-    std::cout << "Entered pc_callback() method." << std::endl;
-    std::cout << std::flush;
-              
-    unsigned int n = 0;
-    int s,t;
-    double min_z = 100, x, y;
-    int y_point = 0;
-    double furthest_relevant_z = .5; 
-    std::vector<double> PCL_closest_points;
-    std::vector<double> PCL_closest_points_x;
-    std::vector<double> PCL_closest_points_y;
-    PCL_closest_points.clear();
-    PCL_closest_points_x.clear();
-    PCL_closest_points_y.clear();
-    
-    Z_MIN = 100;
-    //Iterate through all the points in the image
-    //Convert from pcl to cm
-    for(int k = 0; k < 240; k++){ // 0, 240
-        for(int i = 30; i < 610; i++){ // 0, 640
-            const pcl::PointXYZ & pt=cloud->points[640*(180+k)+(i)];
-            if((pt.z < furthest_relevant_z)){
-                PCL_closest_points_x.push_back(i);
-                PCL_closest_points.push_back(pt.z);    
-                //Find min z
-                if(pt.z < Z_MIN){    
-                    Z_MIN = pt.z;
-                }
-            }
-        }
-    }
-    std::cout << "Lowest Z: " << Z_MIN << std::endl;
-}
-
-
-/************************************************************
- * Function Name: io_callback
- * Parameters: const std_msgs::String::ConstPtr& msg
- * Returns: void
- *
- * Description: This is the callback function of the /stdin 
- *              topic. It hears the input from a std::cin input
- *              and updates the global std_input variable.
- ************************************************************/
-
-/*
-void io_callback(const std_msgs::String::ConstPtr& msg){
-    mx.lock();
-    std_input = msg->data.c_str();
-    // Print to terminal (for testing).
-    std::cout << "Input heard: " << std_input << std::endl;
-    mx.unlock();
-}
-
-*/
-
-
-// ************************************************************* //
 // ****************                             **************** //
 // *****                   MAIN ACTIONS                    ***** //
 // ****************                             **************** //
 // ************************************************************* //
-
-
-/************************************************************
- * Function Name: io_listener
- * Parameters: int rate
- * Returns: void
- *
- * Description: Listens to std::cin for input, and publishes 
- *              message to /stdin topic.
- * ***********************************************************/
-/*
-void io_listener(int rate){
-    
-    ros::NodeHandlePtr nh = boost::make_shared<ros::NodeHandle>();
-    ros::Publisher io_pub = nh->advertise<std_msgs::String>("/stdin", 10);
-    ros::Rate loop_rate(rate);
-                
-    while (ros::ok()) {
-        std::string temp;
-        // Wait for input and save to temp variable.
-        mx.lock(); // Needed?
-        std::cin >> temp;
-        input_received = true;
-        mx.unlock();
-        // Convert to lowercase for easier comparison.
-        boost::algorithm::to_lower(temp);
-        // Assign to msg and publish.
-        std_msgs::String msg;
-        msg.data = temp;
-        io_pub.publish(msg);
-        // Sleep and spin.
-        loop_rate.sleep();
-        ros::spinOnce();
-    }
-}
-*/
 
 /************************************************************
  * Function Name: move_slam
@@ -333,7 +216,7 @@ bool move_slam(double x, double y, double orient_z, double orient_w){
     target.target_pose.pose.position.x =  x;
     target.target_pose.pose.position.y =  y;
     target.target_pose.pose.position.z =  0.0;
-    // Target orientation: Heading of 0.0 (arbitrary)
+    // Target orientation: Heading of (0.0, 0.0, orient_z, orient_w)
     target.target_pose.pose.orientation.x = 0.0;
     target.target_pose.pose.orientation.y = 0.0;
     target.target_pose.pose.orientation.z = orient_z;
@@ -351,7 +234,7 @@ bool move_slam(double x, double y, double orient_z, double orient_w){
        ROS_INFO("You have reached the target.");
        return true;
     }
-    else{
+    else {
        ROS_INFO("The robot failed to reach the target.");
        return false;
     }
@@ -367,46 +250,71 @@ void beep_loop(ros::Publisher soundPublisher, double delay_between_beeps) {
     }
 }
 
+// Voice thread method.
+void voice_loop(std::string &output_string, double delay) {
+    ros::Rate voice_rate(1.0/delay);
+    while(ros::ok() && !input_received) {
+        make_voice(output_string);
+        voice_rate.sleep();
+        ros::spinOnce();
+    }
+}
+
+// Rotate thread method.
+void rotate_loop(ros::Publisher velocityPublisher, double delay) {
+    ros::Rate rotate_rate(1.0/delay);
+    while(ros::ok() && !input_received) {
+        rotate(velocityPublisher, 0.6, 1.5);
+        rotate(velocityPublisher, -0.6, 1.5);
+        rotate_rate.sleep();
+        ros::spinOnce();    
+    } 
+}
+
 
 // This method is used to request assistance from human passersby for
 // tasks such as pressing elevator buttons, or completing the delivery.
 // Updates the char& human_input pointer with the entered character.
-//void request_help(HRI_request goal, char& human_input) {
-void request_help(HRI_request goal, std::string& response, ros::Publisher soundPublisher){
-    
+double request_help(HRI_request goal, std::string& response, ros::Publisher soundPublisher, ros::Publisher velocityPublisher){
+    std::clock_t start_time = std::clock(); 
     switch(goal){
-        case PRESS_DOWN : 
-            std::cout << "Please press the 'DOWN' elevator button. Type any character and then hit enter when you have pressed the button. ";
+        case ACKNOWLEDGE : 
+            std::cout << "Type any character and then hit enter to acknowledge that you have seen me." << std::endl << std::flush;
             break;
-/*        case PRESS_UP :
-            std::cout << "Please press the 'UP' elevator button. Hit enter when you have pressed the button." << std::endl;
-            break;
-*/
-        case WHICH_ELEV :
-            std::cout << "Which elevator is coming? Please enter 'l' or 'r': ";
-            break;
-        case DOOR_OPEN :
-            std::cout << "Please type any character and hit enter when the door is open. "; 
-            break;
-        case CONFIRM_DELIVERY :
-            std::cout << "Please type 'y' and hit enter to complete the delivery. ";
+        case ASK_FOLLOW :
+            std::cout << "Great! Please follow me. Type any character and then hit enter to confirm." << std::endl << std::flush;
             break;
         default : 
             std::cout << "ERROR: Unexpected HRI_request input." << std::endl; 
     }
-    
-    // Spawn beeping thread.
+   
+    // Default initialization of threads are empty
+    boost::thread beep_thread;   
+    boost::thread voice_thread;
+    boost::thread rotate_thread; 
+    // Spawn desired attention-getting threads.
     input_received = false;
-    boost::thread beep_thread(beep_loop, soundPublisher, 4);
+    if (use_beeps)
+        beep_thread = boost::thread(beep_loop, soundPublisher, 4);
+    if (use_voice)
+        voice_thread = boost::thread(voice_loop, (std::string) "Hello. Please check my screen.", 10);
+    if (use_rotate)
+        rotate_thread = boost::thread(rotate_loop, velocityPublisher, 4);
+
     // Wait for human input.
-    //response = std::cin.getline();
     std::cin >> response;
     input_received = true;
-    std::cout << std::endl << std::flush;
-    // Close beep_thread.
-    beep_thread.join();
+    double duration = (std::clock() - start_time) / (double) CLOCKS_PER_SEC;
 
-
+    // Close threads.
+    if (use_beeps)
+        beep_thread.join();
+    if (use_voice)
+        voice_thread.join();
+    if (use_rotate)
+        rotate_thread.join();
+    
+    return duration;
     /*      CODE FOR INPUT BEING ITS OWN THREAD
     ros::Rate beep_rate(0.2); // Beep once every 5 seconds.
     // Beep until there is new input. BLOCKING.
@@ -417,90 +325,6 @@ void request_help(HRI_request goal, std::string& response, ros::Publisher soundP
         beep_rate.sleep();
     }
     */
-    //response = std_input;
-    std::cout << std::endl << std::flush;
-}
-
-
-// Rotate toward elevator, wait until door opens (BLOCKING), and then move forward into elevator
-// and turn to face door
-bool wait_and_enter(ros::Publisher velocityPublisher, ros::Rate rate, double distance_to_elevator){
-    // rotate toward elevator door
-    // rotate(velocityPublisher, rate, 0.8);
-    
-    std::cout << "Waiting for door to open..."; 
-    std::cout << std::flush;
-    if(move_slam(ELEV3L_IN_X, ELEV3L_IN_Y, ELEV3L_IN_OZ, ELEV3L_IN_OW)){
-        std::cout << "Inside elevator." << std::endl << std::flush;
-    } else {
-        std::cout << "Didn't make it inside!" << std::endl << std::flush;
-    }
-    // wait until door is open -- BLOCKING
-    //do {
-    //    std::cout << "Inside do-while loop...";
-    //    ros::spinOnce();
-    //    std::cout << " ros::spinOnce(); completed...";
-    //    rate.sleep();
-    //    std::cout << " rate.sleep(); completed." << std::endl << std::flush;
-    // }
-    //while(Z_MIN < Z_THRESH); 
-    //std::cout << " Door open." << std::endl;
-    // move into elevator
-    // double linear_vel = 0.4;
-    // double duration_secs = 5.0;
-    //move_forward(velocityPublisher, linear_vel, duration_secs);
-    // rotate back to face door
-    //rotate(velocityPublisher, 0.8, 3);
-    //rotate(velocityPublisher, 0.8, 3);
-    //std::cout << " Finished spinning" << std::endl;
-
-    return true;
-}
-
-// Move into elevator and turn to face doors. In theory will eventually return true
-// only if it detects it has successfully entered the elevator, buuuut for now it
-// just always returns true.
-bool thru_doorway(ros::Publisher velocityPublisher){
-        std::cout << " Moving inside elevator.." << std::endl;
-        // move into elevator
-        double linear_vel = 0.5;
-        double duration_secs = 10.0;
-        move_forward(velocityPublisher, linear_vel, duration_secs);
-        //rotate back to face door
-        std::cout << "Rotating...";
-        rotate(velocityPublisher, 0.8, 6);
-        std::cout << " Finished rotation." << std::endl;
-        std::cout << std::flush;
-        return true;
-}
-
-// Move to the correct elevator using SLAM, based off human input passed in through param <response>.
-// Returns true if it successfully enters elevator, and false if it does not.
-bool to_correct_elev(std::string response, ros::Publisher velocityPublisher){
-    if ( !response.compare("r") )  { 
-     // NOTE: std::string.compare(str2) returns 0 (false) if strings are identical,
-     // so !std::string.compare(str2) returns 1 (true) when they match
-            
-        std::cout << "Moving to right elevator..." << std::endl;
-        if ( move_slam(ELEV3R_X, ELEV3R_Y, ELEV3R_OZ, ELEV3R_OW) ) {
-            return true;
-        }
-        /*if ( move_slam(ELEV3R_X, ELEV3R_Y, ELEV3R_OZ, ELEV3R_OW) ) {
-            std::cout << "Inside right elevator." << std::endl << std::flush;
-            return true;
-        }*/
-    } 
-    else {          
-        std::cout << "At correct (left) elevator." << std::endl;
-
-        return true;
-        /*
-        if ( move_slam(ELEV3L_X, ELEV3L_Y, ELEV3L_OZ, ELEV3L_OW) ) {
-            std::cout << "Inside left elevator." << std::endl << std::flush;
-            return true;
-        }*/
-    }
-    return false;
 }
 
 // *************************** Main ************************** //
@@ -511,76 +335,57 @@ int main (int argc, char** argv)
     ros::NodeHandlePtr nh = boost::make_shared<ros::NodeHandle>();
 
     // Publishers and subscribers.
-    ros::Subscriber pc_sub = nh->subscribe<PointCloud>("/camera/depth/points", 1, pc_callback);
-    //ros::Subscriber io_sub = nh->subscribe<std_msgs::String>("/stdin", 1, io_callback);
-    ros::Publisher 	vel_pub = nh->advertise<geometry_msgs::Twist>("cmd_vel_mux/input/teleop", 1000);
+    ros::Publisher vel_pub = nh->advertise<geometry_msgs::Twist>("cmd_vel_mux/input/teleop", 1000);
     ros::Publisher sound_pub = nh->advertise<kobuki_msgs::Sound>("/mobile_base/commands/sound",1000);
 
     // Setup state variables.
-    my_state = TO_ELEV;
-  
-    // Spawn std::cin input listener thread.
-    //boost::thread io_thread(io_listener, 10);
+    my_state = TO_LOBBY;
+    // Determine which attention-getting modalities to employ
+    std::string modes = argv[1];
+  	set_modalities(modes);
 
-  	ros::Rate loop_rate(10);
-  	// Main loop.
+    // For time keeping
+    double duration_1;
+    double duration_2;
+    ros::Rate loop_rate(10);
+    // Main loop.
     bool done_flag = false;
   	while(ros::ok() && !done_flag) {
         std::string response;
         switch (my_state) {
            /*******************************************************************************/  
-            case TO_ELEV : 
-                if(move_slam(ELEV3L_X, ELEV3L_Y, ELEV3L_OZ, ELEV3L_OW)){
-                    my_state = WAIT_ELEV;
+            case TO_LOBBY : 
+                if(move_slam(LOBBY_X, LOBBY_Y, LOBBY_OZ, LOBBY_OW)){
+                    my_state = WAIT_ACKNOWLEDGE;
                 }
                 break;
 
            /*******************************************************************************/  
-            case  WAIT_ELEV : 
-                request_help(PRESS_DOWN, response, sound_pub);
-                my_state = ENTER_ELEV;
+            case  WAIT_ACKNOWLEDGE : 
+                duration_1 = request_help(ACKNOWLEDGE, response, sound_pub, vel_pub);
+                my_state = WAIT_FOLLOW;
                 break;
 
            /*******************************************************************************/  
-            case ENTER_ELEV :
-                
-                // Ask for help to determine which elevator is open.
-                request_help(WHICH_ELEV, response, sound_pub);
-                
-                // Move to correct elevator
-                   // NOTE: bot should already be in front of left elevator, and will
-                   // move to right elev if needed.
-                if ( to_correct_elev(response, vel_pub) ) {
-                    if ( thru_doorway(vel_pub) )      my_state = ON_ELEV;
+            case WAIT_FOLLOW :
+                duration_2 = request_help(ASK_FOLLOW, response, sound_pub, vel_pub);
+                my_state = TO_CLASS;
+                break;
+
+           /*******************************************************************************/  
+            case TO_CLASS :
+                if(move_slam(CLASS_X, CLASS_Y, CLASS_OZ, CLASS_OW)){
+                    //my_state = AWAIT_INPUT;
+                    done_flag = true;
                 }
-                else                                my_state = ERROR;
-                
                 break;
-
+           
            /*******************************************************************************/  
-            case ON_ELEV :
-                std::cout << "Inside state ON_ELEV" << std::endl << std::flush;
-                request_help(DOOR_OPEN, response, sound_pub);
-                my_state = EXIT_ELEV;
-                break;
-
-           /*******************************************************************************/  
-            case EXIT_ELEV :
-                if( thru_doorway(vel_pub) ) my_state = TO_TARGET;
-                break;
-
-           /*******************************************************************************/  
-            case TO_TARGET :
-                //move_slam(DELIVERY_X, DELIVERY_Y, ELEV3L_OZ, ELEV3L_OW);
-                my_state = AWAIT_INPUT;
-                break;
-
-           /*******************************************************************************/  
-            case AWAIT_INPUT :
-                request_help(CONFIRM_DELIVERY, response, sound_pub);
+           /*case AWAIT_INPUT :
+                request_help(CONFIRM_RETURNED, response, sound_pub);
                 done_flag = true;
                 break;
-
+*/
            /*******************************************************************************/  
             case ERROR :
                 break;
@@ -595,8 +400,7 @@ int main (int argc, char** argv)
         vel_pub.publish(T);
     }   
 
-    std::cout << "Delivery complete. Shutting down program, goodbye!" << std::endl << std::flush;
-
-    // Wait for io_thread() to end. 
-    //io_thread.join();
+    std::cout << "Duration 1: " << duration_1 << std::endl;
+    std::cout << "Duration 2: " << duration_2 << std::endl;
+    std::cout << "Complete. Shutting down program, goodbye!" << std::endl << std::flush;
 }
