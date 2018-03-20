@@ -19,6 +19,7 @@
  * roslaunch astra_launch astra_pro.launch
  * rosparam set /cmvision/color_file ~/squirtlebot_ws/src/turn_to_trainer/src/colors.txt
  * roslaunch cmvision cmvision.launch image:=/camera/rgb/image_raw (can quit after launched)
+ * roslaunch researcher_input researcher_input_node.launch
  */
 
 //TODO: The excessive couts are for debugging purposes. Remove later.
@@ -129,6 +130,7 @@ void voc_RegCallBack(const std_msgs::String& command){
 }
 
 // Callback function for the Pozyx localization
+// Also serves as callback for the researcher_input node 
 // Changes my_ll_state to CELEBRATE_TURN when squirtlebot gets close to a pokemon
 void pozyx_localization_callback(const std_msgs::String& command) {
     // Only used when we are trying to catch a pokemon
@@ -391,45 +393,6 @@ void pokemon_escape() {
     speak("next_one");
 }
 
-// TODO: Make this method.
-// Returns true if SquirtleBot is on the path, or false if it is not. If it can't see
-// the path, returns false by default.
-// Used by return_to_path() (SquirtleBot controlling istelf) as well as for checking
-// that the bot is on the path (trainer controlling SquirtleBot) throughout the minigame.
-bool on_path(){
-    // << SHOULD THIS JUST BE Ai FLAG SET BY blobs_callback() AND image_callback()?
-        //  -> Probably not; this function should handle no_blobs counter, as well
-        //      as no_blobs being less than threshold, but line being off_center anyway.
-    
-   /*
-    if(no_blobs > NO_BLOBS_CUTOFF)
-        return false;
-    else if ( abs(line.bot_intercept - frame_center) > OFFCENTER_THRESHOLD )
-            // note: line.bot_intercept will be different than line.intercept,
-                // because bot_intercept occurs at x = frame_width, instead of
-                // y = 0, as defined for line.intercept. 
-        return false;
-    else
-        return true;
-    
-    * */ 
-}
-
-// TODO: Make this method.
-// In this, SquirtleBot should turn towards the line's centroid, and then
-// let the trainer know it is ready to receive more commands. Returns
-// TRUE when it has successfully returned to path.
-bool return_to_path(){
-    bool facing_centroid = false; // TODO: change to be something like
-                                    //  = (abs(centroid.x - window_center.x) < threshold )
-    if(!facing_centroid){
-        // turn to center
-        // TODO: Twist messages
-        return false;
-    }
-    else
-        return true; 
-}
 
 void update_balls(BallType ball_type, int num_balls){
     switch(ball_type){
@@ -596,9 +559,8 @@ void catch_gameplay(){
             break;
         // Main catching mini game
         case MINI_GAME:
-            //std::cout << voice_cmd << std::endl << std::flush;
             //TODO: Line Follow
-            //TODO: If off of line, let player know
+            //TODO: If off of line, let player know - call lose pokeball
             get_direction();
             break;
         // Losing a ball sequence
@@ -678,6 +640,8 @@ main(int argc, char** argv){
     ros::Publisher vel_pub = nh->advertise<geometry_msgs::Twist>("cmd_vel_mux/input/teleop", 1000);
     ros::Subscriber voice_cmd_sub = nh->subscribe("/recognizer/output", 5, voc_RegCallBack); 
     ros::Subscriber pozyx_loc_sub = nh->subscribe("/pozyx_localization", 1000, pozyx_localization_callback);
+    // Note: researcher_input is for backup in case the Pozyx tags are unresponsive
+    ros::Subscriber input_sub = nh->subscribe("/researcher_input", 1000, pozyx_localization_callback);
     ros::Subscriber trainer_blob_sub = nh->subscribe("/blobs", 50, trainer_blobs_callback);
 
 
