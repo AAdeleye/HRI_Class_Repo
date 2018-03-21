@@ -9,11 +9,12 @@
  *                     Professor: Laurel Riek              *
  *                     TA: Angelique Taylor                *
  **********************************************************/
-
+//TODO: we should make a launch file...
 /*
- * Nodes to have running in background before starting:
+ * Nodes to have running in background before starting: 
+ * Note**: source squirtlebot_ws bash
  * roslaunch turtlebot_navigation amcl_demo.launch map_file:=/home/turtlebot/squirtlebot_ws/src/gaitech_slam_navigation/src/maps/Atk6.yaml
- * roslaunch gaitech_slam_navigation recognizer.launch
+ * roslaunch main_pac recognizer.launch
  * roslaunch pozyx_localization pozyx_localization_node.launch
  * roslaunch sound_play soundplay_node.launch
  * roslaunch astra_launch astra_pro.launch
@@ -32,7 +33,6 @@
 
 #include <display_image/display_image.h>
 #include <gaitech_slam_navigation/map_navigation.h>
-#include <turn_to_trainer/turn_to_trainer.h>
 //#include <gaitech_slam_navigation/voice_teleop.h>
 #include "dialogue.h"
 
@@ -73,12 +73,13 @@ enum LL_State {
     LOSE_BALL,
     LOSE_BALL_LEFT,
     LOSE_BALL_RIGHT,
-    LOSE_BALL_TURN,
-    TURN_BACK_TO_PATH,
+    LOSE_BALL_SQUIRTLEBOT,
     RETURN_TO_PATH,
-    CELEBRATE_TURN,
+    CELEBRATE_LEFT,
+    CELEBRATE_RIGHT,
     CELEBRATE,
-    FAILURE_TURN,
+    FAILURE_LEFT,
+    FAILURE_RIGHT,
     FAILURE
 };
 LL_State my_ll_state;
@@ -88,7 +89,9 @@ enum Voice_reg{
     BACKWARD,
     LEFT,
     RIGHT,
-    STOP
+    STOP,
+    GO,
+    WAIT
 }; 
 Voice_reg voice_cmd = STOP;
 
@@ -98,9 +101,9 @@ int pokemon_encountered = 0;
 bool caught_pikachu = false;
 bool caught_dragonite = false;
 bool caught_mew = false;
-int num_pokeball = 0; // default value of pokeballs
-int num_greatball = 0; // Increase to 3 after encountering pikachu
-int num_ultraball = 0; // Increase to 3 after finding ultraballs
+int num_pokeball = 0; // Increase to 3 after demo
+int num_greatball = 0; // Increase to 3 after encountering Pikachu
+int num_ultraball = 0; // Increase to 3 after finding UltraBalls
 bool got_user_confirmation = false;
 
 
@@ -111,10 +114,7 @@ bool got_user_confirmation = false;
 // ************************************************************* //
 
 void voc_RegCallBack(const std_msgs::String& command){    
-    //std::cout << "outside " + voice_cmd << std::endl;
-    std::cout << "outside " + command.data << std::endl;
     if (command.data.find("squirtlebot") != std::string::npos){
-        
         if(command.data.find("forward") != std::string::npos){
             voice_cmd = FORWARD;}
         else if(command.data.find("backward") != std::string::npos){
@@ -125,7 +125,12 @@ void voc_RegCallBack(const std_msgs::String& command){
             voice_cmd = LEFT;}
         else if(command.data.find("stop") != std::string::npos){
             voice_cmd = STOP;}
-       //std::cout << voice_cmd << std::endl;
+        else if(command.data.find("go") != std::string::npos){
+            got_user_confirmation = true;
+            voice_cmd = GO;}
+        else if(command.data.find("wait") != std::string::npos){
+            got_user_confirmation = false;
+            voice_cmd = WAIT;}
     }   
 }
 
@@ -140,15 +145,15 @@ void pozyx_localization_callback(const std_msgs::String& command) {
             switch(pokemon_encountered) {
                 case 0: // Demo
                     if (command.data.find("demo") != std::string::npos)
-                        my_ll_state = CELEBRATE_TURN;
+                        my_ll_state = CELEBRATE_LEFT;
                     break;
                 case 1: // Pikachu
                     if (command.data.find("pikachu") != std::string::npos)
-                        my_ll_state = CELEBRATE_TURN;
+                        my_ll_state = CELEBRATE_LEFT;
                     break;
                 case 2: // Dragonite
                     if (command.data.find("dragonite") != std::string::npos)
-                        my_ll_state = CELEBRATE_TURN;
+                        my_ll_state = CELEBRATE_LEFT;
                     break;
                 case 3: // Ultraball
                     // Shouldn't get here
@@ -156,7 +161,7 @@ void pozyx_localization_callback(const std_msgs::String& command) {
                     break;
                 case 4: // Mew
                     if (command.data.find("mew") != std::string::npos)
-                        my_ll_state = CELEBRATE_TURN;
+                        my_ll_state = CELEBRATE_LEFT;
                     break;
                 default:
                     std::cout << "pozyx_localization_callback: Invalid number of pokemon_encountered: " +
@@ -175,18 +180,18 @@ void pozyx_localization_callback(const std_msgs::String& command) {
 void Slam(){
     switch(pokemon_encountered){
         case 0: // To Pikachu
-            move_to_L1();
+            move_to_Pica();
             std::cout << "Slam case 0" << std::endl << std::flush;
             break;
         case 1: // To Dragonite
-            move_to_L2();
+            move_to_Dragon();
             std::cout << "Slam case 1" << std::endl << std::flush;
             break;
         case 2: // To UltraBalls
-            move_to_B1();
+            move_to_Ultra();
             break;
         case 3: // To Mew
-            move_to_L3();
+            move_to_Meu();
             break;
         default:
             std::cout << "Error: Unexpected state in Slam reached" << std::endl;
@@ -258,7 +263,6 @@ void introduce_pokemon() {
 }
 
 // Called in NAVIGATE once SquirtleBot arrives at the next location.
-//TODO: vocal confirmation from player to move to next state
 void confirm_catch_pokemon() {
     display_squirtle("front");
     switch(pokemon_encountered) {
@@ -323,7 +327,6 @@ void congratulate_trainer() {
             std::cout << "veryhappy congratulate pikachu" << std::endl << std::flush;
             speak("caught_pokemon");
             caught_pikachu = true;
-            num_greatball = 3;
             display_squirtle("veryhappy");
             my_state = NAVIGATE;
             break;
@@ -423,92 +426,14 @@ bool done_spinning(double velocity, int times_to_spin) {
     }
 }
 
-// Used to make SquirtleBot face the trainer.
-// When in LOSE_BALL_TURN state, it will update total_times_spun so SquirtleBot can
-// turn back to its previous position in back_on_path().
-int total_times_spun = 0;
-bool facing_trainer() {
-    int dir_to_turn = direction_to_turn();
-    switch (my_state) {
-        case LOSE_BALL_TURN:
-            total_times_spun += 1;
-            // Once the trainer is in SquirtleBot's sight, slow down spinning to avoid overshooting
-            if (check_see_trainer()) {
-                if (dir_to_turn == 0) {
-                    T.angular.z = 0.0;
-                    return true;
-                // Turn in the direction of the trainer until they are in the center of SquirtleBot's view
-                } else {
-                    T.angular.z = dir_to_turn * 0.5;
-                    return false;
-                }
-            // Spin slowly until SquirtleBot sees the trainer
-            } else {
-                T.angular.z = 0.5;
-                return false;
-            }
-            break;
-        case CELEBRATE_TURN:
-            // Once the trainer is in SquirtleBot's sight, slow down spinning to avoid overshooting
-            if (check_see_trainer()) {
-                if (dir_to_turn == 0) {
-                    T.angular.z = 0.0;
-                    return true;
-                // Turn in the direction of the trainer until they are in the center of SquirtleBot's view
-                } else {
-                    T.angular.z = dir_to_turn * 0.5;
-                    return false;
-                }
-            // Spin quickly until SquirtleBot sees the trainer
-            } else {
-                T.angular.z = 2.5;
-                return false;
-            }
-            break;
-        case FAILURE_TURN:
-            // Once the trainer is in SquirtleBot's sight, slow down spinning to avoid overshooting
-            if (check_see_trainer()) {
-                if (dir_to_turn == 0) {
-                    T.angular.z = 0.0;
-                    return true;
-                // Turn in the direction of the trainer until they are in the center of SquirtleBot's view
-                } else {
-                T.angular.z = dir_to_turn * 0.5;
-                return false;
-                }
-            // Spin slowly until SquirtleBot sees the trainer
-            } else {
-                T.angular.z = 0.5;
-                return false;
-            }
-            break;
-        default:
-            std::cout << "facing trainer: invalid my_state" << std::endl << std::flush;
-            return true;
-    }
-}
-
-// Used to turn SquirtleBot back to its previous position on the line.
-// Should probably be followed by return_to_path() so the player isn't penalized again
-int times_spun = 0;
-bool back_on_path() {
-    if (times_spun >= total_times_spun) {
-        T.angular.z = 0.0;
-        times_spun = 0;
-        total_times_spun = 0;
-        return true;
-    } 
-    T.angular.z = -0.5;
-    times_spun += 1;
-    return false;
-}
-
 // Used to get vocal confirmation from the trainer.
 bool get_confirmation() {
-    if (my_state == INTRO)
-        return got_user_confirmation;
-    else
+    if (got_user_confirmation) {
+        got_user_confirmation = false;
+        return true;
+    } else {
         return false;
+    }
 }
 
 // ****************************************************** //
@@ -541,7 +466,7 @@ void catch_gameplay(){
     }
 
     if (num_balls <= 0 && my_state != INTRO) 
-        my_ll_state = FAILURE;
+        my_ll_state = FAILURE_LEFT;
 
     switch (my_ll_state) {
         // Transforming to PokeBallBot
@@ -575,55 +500,73 @@ void catch_gameplay(){
                 my_ll_state = LOSE_BALL;
             break;
         case LOSE_BALL:
-            // Change back into SquirtleBot and inform the player they lost a ball
+            // Play the ball sound and update the number of balls
             speak("pokeball_open");
             num_balls--;
             update_balls(ball_type, num_balls);
-            my_ll_state = LOSE_BALL_TURN;
+            my_ll_state = LOSE_BALL_SQUIRTLEBOT;
             break;
-        case LOSE_BALL_TURN:
-            // Turn towards the player
-            if (facing_trainer()) {
+        case LOSE_BALL_SQUIRTLEBOT:
+            // Spin in a circle and turn back into SquirtleBot. Inform the player they lost a ball
+            if (done_spinning(-3.1, 13)) {
                 lose_ball_script(num_balls);
                 if (num_balls > 0)
-                    my_ll_state = TURN_BACK_TO_PATH;
+                    my_ll_state = RETURN_TO_PATH;
                 else
-                    my_ll_state = FAILURE_TURN;
+                    my_ll_state = FAILURE_LEFT;
             }
-            break;
-        case TURN_BACK_TO_PATH:
-            // Turn back to the previous position
-            if (back_on_path()) 
-                my_ll_state = RETURN_TO_PATH;
             break;
         case RETURN_TO_PATH:
             // Reposition SquirtleBot so it's on the line
             // TODO: Call after TO_POKEBALLBOT to make sure spinning doesn't mess up positioning?
             // return_to_path() will return true once the bot is on the path again
-            if(return_to_path())
+            
+            /* Commented out to compile */
+            //if(return_to_path())
                 my_ll_state = TO_POKEBALLBOT; // switch back to PokeballBot and then return to MINI_GAME
             break;
         // Celebrate sequence
-        case CELEBRATE_TURN:
-            // Spin to face the player
-            if (facing_trainer())
+        case CELEBRATE_LEFT:
+            // Happy dance left
+            if (done_spinning(3.0, 6))
+                my_ll_state = CELEBRATE_RIGHT;
+            break;
+        case CELEBRATE_RIGHT:
+            // Happy dance right
+            if (done_spinning(-3.0, 12))
                 my_ll_state = CELEBRATE;
             break;
         case CELEBRATE:
-            // Congratulate the trainer
-            congratulate_trainer(); // Note: updates my_state to NAVIGATE or CONCLUSION
-            update_balls(ball_type, num_balls);
+            // Re-center to previous position and congratulate the trainer
+            if (done_spinning(3.0, 6)) {
+                congratulate_trainer(); // Note: updates my_state to NAVIGATE or CONCLUSION
+                update_balls(ball_type, num_balls);
+                if (pokemon_encountered == 1) { // After catching Pikachu
+                    num_greatball = 3;
+                    speak("greatballs");
+                }
+            }
             break;
         // Failure sequence
-        case FAILURE_TURN:
-            // Spin to face the player
-            if (facing_trainer())
-                my_ll_state = FAILURE;
+        case FAILURE_LEFT:
+            // Sad dance left
+            if (done_spinning(0.6, 6))
+                my_ll_state = FAILURE_RIGHT;
             break;
+        case FAILURE_RIGHT:
+            // Sad dance right
+            if (done_spinning(-0.6, 12))
+                my_ll_state = FAILURE;
         case FAILURE:
-            // Inform the player that the Pokemon escaped
-            pokemon_escape(); // Note: updates my_state to NAVIGATE or CONCLUSION
-            update_balls(ball_type, num_balls);
+            // Re-center to previous position and inform the player that the Pokemon escaped
+            if (done_spinning(0.6, 6)) {
+                pokemon_escape(); // Note: updates my_state to NAVIGATE or CONCLUSION
+                update_balls(ball_type, num_balls);
+                if (pokemon_encountered == 1) {
+                    num_greatball = 3;
+                    speak("greatballs");
+                }
+            }
             break;
      }
 }
@@ -642,29 +585,32 @@ main(int argc, char** argv){
     ros::Subscriber pozyx_loc_sub = nh->subscribe("/pozyx_localization", 1000, pozyx_localization_callback);
     // Note: researcher_input is for backup in case the Pozyx tags are unresponsive
     ros::Subscriber input_sub = nh->subscribe("/researcher_input", 1000, pozyx_localization_callback);
-    ros::Subscriber trainer_blob_sub = nh->subscribe("/blobs", 50, trainer_blobs_callback);
 
 
-    // TODO: Start in PLAYER_CONFIRMATION once that's implemented?
     my_state = INTRO;
     my_ll_state = TO_POKEBALLBOT; 
-    // This line for testing
-    //my_state = CATCH_POKEMON;
-    //my_ll_state = LOSE_BALL;
 
     while(ros::ok()){
         switch (my_state) {
             case INTRO:
-                std::cout << "default intro" << std::endl << std::flush;
-                display_squirtle("default");
-                my_state = CATCH_POKEMON;
-                // Three PokeBalls for the demo
-                num_pokeball = 3;
+                if (get_confirmation()) {
+                    std::cout << "default intro" << std::endl << std::flush;
+                    display_squirtle("default");
+                    my_state = CATCH_POKEMON;
+                    // Three PokeBalls for the demo
+                    num_pokeball = 3;
+                }
                 break;
             case PLAYER_CONFIRMATION:
                 if (get_confirmation()) 
-                    // TODO: Get vocal confirmation from player before moving on?
-                    my_state = NAVIGATE;
+                    // When pokemon_encountered == 3, we are at the ultra ball
+                    // so move on to the next pokemon
+                    if (pokemon_encountered == 3) {
+                        my_state = NAVIGATE;
+                    } else {
+                        my_state = CATCH_POKEMON;
+                        my_ll_state = TO_POKEBALLBOT;
+                    }
                 break;
             case NAVIGATE:
                 introduce_pokemon();
@@ -673,13 +619,7 @@ main(int argc, char** argv){
                 pokemon_encountered += 1;
                 // Once at the next location, say more things
                 confirm_catch_pokemon();
-                // 2 lines below for testing. 
-                // Remove when we implement vocal confirmation from trainer.
-                // Note: when pokemon_encounter == 3, we are at the ultra ball
-                if (pokemon_encountered != 3) {
-                    my_state = CATCH_POKEMON;
-                    my_ll_state = TO_POKEBALLBOT; 
-                } // else, remain in NAVIGATE state
+                my_state = PLAYER_CONFIRMATION;
                 break;
             case CATCH_POKEMON:
                 catch_gameplay();
