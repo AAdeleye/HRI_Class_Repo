@@ -1,0 +1,3 @@
+<launch>
+    <node name="researcher_input_node" pkg="researcher_input" type="researcher_input.py"/>
+</launch>

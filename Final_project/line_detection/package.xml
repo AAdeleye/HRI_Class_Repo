@@ -1,0 +1,29 @@
+<?xml version="1.0"?>
+<package>
+  <name>line_detection</name>
+  <version>0.0.1</version>
+  <description>The line_detector package for SquirtleBot. Package provides the ability for SquirtleBot to follow a line of a constant, high-contrast color. Developed by Sanmi Adeleye, Andi Frank, and Alyssa Kubota for Human-Robot Interaction (UCSD CSE276B, Winter 2018) class final project.</description>
+
+  <maintainer email="a2frank@eng.ucsd.edu">Andi Frank</maintainer>
+
+  <license>BSD</license>
+
+  <buildtool_depend>catkin</buildtool_depend>
+
+  <build_depend>cmvision</build_depend>
+  <build_depend>pcl_conversions</build_depend>
+  <build_depend>pcl_ros</build_depend>
+  <build_depend>roscpp</build_depend>
+  <build_depend>sensor_msgs</build_depend>
+  <build_depend>std_msgs</build_depend>
+  <build_depend>libpcl-all-dev</build_depend>
+
+  <run_depend>cmvision</run_depend>
+  <run_depend>pcl_conversions</run_depend>
+  <run_depend>pcl_ros</run_depend>
+  <run_depend>roscpp</run_depend>
+  <run_depend>sensor_msgs</run_depend>
+  <run_depend>std_msgs</run_depend>
+  <run_depend>libpcl-all</run_depend>
+
+</package>

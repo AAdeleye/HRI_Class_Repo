@@ -1,0 +1,8 @@
+<!--
+This launch file starts StartLocalizing.py, which is the node that
+publishes when two Pozyx tags are close to each other.
+-->
+
+<launch>
+  <node name="pozyx_localization_node" pkg="pozyx_localization" type="StartLocalizing.py"/>
+</launch>
